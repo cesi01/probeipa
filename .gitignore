@@ -1,0 +1,22 @@
+# Byte-compiled
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+venv/
+env/
+
+# Logs
+
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Datenbanken
+
