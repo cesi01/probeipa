@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Floorplan Manager</title>
+  <style>
+    body {
+      margin: 0; font-family: system-ui, sans-serif;
+      background: #0b0f14; color: #e6eef5;
+      display: flex; height: 100vh;
+    }
+    aside {
+      width: 320px; background: #121821; padding: 1rem;
+      overflow-y: auto; border-right: 1px solid #1f2a37;
+    }
+    main { flex: 1; position: relative; background: #0a0f17; }
+    .floorplan { max-width: 100%; max-height: 100%; display: block; margin: auto; }
+    .pin-layer { position: absolute; top:0; left:0; right:0; bottom:0; }
+    .pin {
+      position: absolute; transform: translate(-50%, -100%);
+      width: 16px; height: 16px; border-radius: 50%;
+      background: orange; border: 2px solid black; cursor: pointer;
+    }
+    .tooltip {
+      position: absolute; transform: translate(-50%, 5px);
+      background: #0b1220; border: 1px solid #1f2a37;
+      padding: 8px; border-radius: 8px; display: none;
+    }
+    .tooltip.visible { display: block; }
+    summary { cursor: pointer; font-weight: bold; margin: 4px 0; }
+    ul { list-style: none; padding-left: 1rem; }
+    ul li { cursor: pointer; margin: 2px 0; }
+    button { margin: 4px 0; padding: 6px 10px; cursor: pointer; }
+    .infobar {
+      position: absolute; bottom: 10px; left: 10px;
+      background: #0b1220; padding: 4px 8px; border-radius: 6px;
+      font-family: monospace; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <aside>
+    <h2>Standorte</h2>
+    <div id="treeMenu"></div>
+    <button id="newLocation">Neuer Standort</button>
+    <button id="newAbteil">Neues Abteil</button>
+
+    <h3>Floorplan</h3>
+    <form id="uploadForm">
+      <input id="floorplan" type="file" accept="image/*" />
+      <button type="submit">Hochladen</button>
+    </form>
+
+    <h3>Pin hinzufügen</h3>
+    <input id="devName" placeholder="Gerätename" />
+    <input id="devIp" placeholder="IP-Adresse" />
+    <button id="addByClick">Pin per Klick setzen</button>
+
+    <h3>Daten</h3>
+    <button id="savePins">Speichern</button>
+    <button id="loadPins">Laden</button>
+  </aside>
+
+  <main>
+    <img id="img" class="floorplan" alt="Floorplan" />
+    <div id="pinLayer" class="pin-layer"></div>
+    <div class="infobar">Maus: <span id="infoMouse">–</span></div>
+  </main>
+
+  <template id="pinTemplate"><div class="pin"></div></template>
+
+  <script>
+  (function(){
+    const img=document.getElementById('img');
+    const pinLayer=document.getElementById('pinLayer');
+    const devName=document.getElementById('devName');
+    const devIp=document.getElementById('devIp');
+    const addByClick=document.getElementById('addByClick');
+    const savePins=document.getElementById('savePins');
+    const loadPins=document.getElementById('loadPins');
+    const uploadForm=document.getElementById('uploadForm');
+    const treeMenu=document.getElementById('treeMenu');
+    const infoMouse=document.getElementById('infoMouse');
+
+    let state={locations:{}};
+    let currentLocation=null, currentAbteil=null;
+    let natural={width:0,height:0}, scale=1, offset={left:0,top:0};
+    let clickToPlace=false, dragging=false, selectedId=null;
+
+    const uid=()=>Math.random().toString(36).slice(2,9);
+
+    function updateTree(){
+      treeMenu.innerHTML='';
+      for(const [loc, abteile] of Object.entries(state.locations)){
+        const details=document.createElement('details');
+        details.innerHTML=`<summary>${loc}</summary>`;
+        const ul=document.createElement('ul');
+        for(const abt of Object.keys(abteile)){
+          const li=document.createElement('li');
+          li.textContent=abt;
+          li.onclick=()=>{currentLocation=loc;currentAbteil=abt;loadFloorplan();};
+          ul.appendChild(li);
+        }
+        details.appendChild(ul);
+        treeMenu.appendChild(details);
+      }
+    }
+
+    function renderPins(){
+      pinLayer.innerHTML='';
+      if(!currentLocation||!currentAbteil)return;
+      const abt=state.locations[currentLocation][currentAbteil];
+      for(const p of abt.pins){
+        const el=document.createElement('div');
+        el.className='pin'; el.dataset.id=p.id;
+        el.style.left=(p.x*scale)+'px'; el.style.top=(p.y*scale)+'px';
+        const tip=document.createElement('div');
+        tip.className='tooltip';
+        tip.innerHTML=`<strong>${p.name}</strong><br>IP: ${p.ip}<br>${p.x|0},${p.y|0}<br>
+          <button data-action=\"move\">Verschieben</button>
+          <button data-action=\"edit\">Bearbeiten</button>`;
+        tip.style.left=el.style.left; tip.style.top=el.style.top;
+        el.onmouseenter=()=>tip.classList.add('visible');
+        el.onmouseleave=()=>tip.classList.remove('visible');
+        tip.onmouseleave=()=>tip.classList.remove('visible');
+        tip.onclick=(e)=>{
+          const btn=e.target.closest('button'); if(!btn)return;
+          if(btn.dataset.action==='edit'){p.name=prompt('Name',p.name)||p.name;p.ip=prompt('IP',p.ip)||p.ip;renderPins();}
+          if(btn.dataset.action==='move'){selectedId=p.id;dragging=true;}
+        };
+        pinLayer.appendChild(el); pinLayer.appendChild(tip);
+      }
+    }
+
+    function loadFloorplan(){
+      const abt=state.locations[currentLocation][currentAbteil];
+      if(!abt||!abt.image)return;
+      img.onload=()=>{natural={width:img.naturalWidth,height:img.naturalHeight};scale=img.width/natural.width;renderPins();};
+      img.src=abt.image;
+    }
+
+    pinLayer.addEventListener('mousemove',e=>{
+      const rect=pinLayer.getBoundingClientRect();
+      const x=(e.clientX-rect.left)/scale, y=(e.clientY-rect.top)/scale;
+      infoMouse.textContent=`${x|0},${y|0}`;
+      if(dragging&&selectedId){
+        const abt=state.locations[currentLocation][currentAbteil];
+        const p=abt.pins.find(pp=>pp.id===selectedId);
+        if(p){p.x=x;p.y=y;renderPins();}
+      }
+    });
+    window.addEventListener('mouseup',()=>{dragging=false;selectedId=null;});
+
+    addByClick.onclick=()=>{clickToPlace=!clickToPlace;};
+    pinLayer.onclick=e=>{
+      if(clickToPlace){
+        const rect=pinLayer.getBoundingClientRect();
+        const x=(e.clientX-rect.left)/scale, y=(e.clientY-rect.top)/scale;
+        const abt=state.locations[currentLocation][currentAbteil];
+        abt.pins.push({id:uid(),name:devName.value,ip:devIp.value,x,y});
+        clickToPlace=false; renderPins();
+      }
+    };
+
+    uploadForm.onsubmit=async e=>{
+      e.preventDefault();
+      if(!currentLocation||!currentAbteil)return alert('Standort/Abteil wählen');
+      const file=document.getElementById('floorplan').files[0];
+      if(!file)return;
+      const fd=new FormData(); fd.append('file',file);
+      const res=await fetch(`/upload/${currentLocation}/${currentAbteil}`,{method:'POST',body:fd});
+      const data=await res.json();
+      state.locations[currentLocation][currentAbteil].image=data.url;
+      loadFloorplan();
+    };
+
+    savePins.onclick=()=>{fetch('/api/pins',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)});};
+    loadPins.onclick=async()=>{const res=await fetch('/api/pins');if(res.ok){state=await res.json();updateTree();}};
+
+    document.getElementById('newLocation').onclick=()=>{const name=prompt('Standort');if(!name)return;state.locations[name]={};updateTree();};
+    document.getElementById('newAbteil').onclick=()=>{if(!currentLocation)return alert('Standort wählen');const name=prompt('Abteil');if(!name)return;state.locations[currentLocation][name]={pins:[],image:null};updateTree();};
+
+    // Auto load if pins.json exists
+    loadPins.click();
+  })();
+  </script>
+</body>
+</html>
